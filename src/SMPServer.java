@@ -1,3 +1,5 @@
+import javax.net.ssl.*;
+import java.security.*;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -7,25 +9,41 @@ public class SMPServer {
     private static Map<String, String> messageStore = Collections.synchronizedMap(new HashMap<>());
 
     public static void main(String[] args) {
-        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
-            System.out.println("SMP Server started on port " + PORT);
+        try {
+            char[] keystorePassword = "your_keystore_password".toCharArray();
+            KeyStore keyStore = KeyStore.getInstance("JKS");
+            FileInputStream fis = new FileInputStream("server_keystore.jks");
+            keyStore.load(fis, keystorePassword);
+            fis.close();
+
+            KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
+            kmf.init(keyStore, keystorePassword);
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(kmf.getKeyManagers(), null, null);
+
+            SSLServerSocketFactory ssf = sslContext.getServerSocketFactory();
+            SSLServerSocket serverSocket = (SSLServerSocket) ssf.createServerSocket(PORT);
+
+            System.out.println("SMP Server started with SSL on port " + PORT);
 
             while (true) {
-                Socket clientSocket = serverSocket.accept();
+                SSLSocket clientSocket = (SSLSocket) serverSocket.accept();
                 System.out.println("New client connected: " + clientSocket.getInetAddress());
                 new ClientHandler(clientSocket).start();
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.out.println("Error starting server: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
     private static class ClientHandler extends Thread {
-        private Socket socket;
+        private SSLSocket socket;
         private BufferedReader input;
         private PrintWriter output;
 
-        public ClientHandler(Socket socket) {
+        public ClientHandler(SSLSocket socket) {
             this.socket = socket;
         }
 
@@ -33,6 +51,8 @@ public class SMPServer {
             try {
                 input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 output = new PrintWriter(socket.getOutputStream(), true);
+
+                output.println("Welcome to SMP Server. Please log in.");
 
                 String message;
                 while ((message = input.readLine()) != null) {

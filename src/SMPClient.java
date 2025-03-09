@@ -1,149 +1,134 @@
+import javax.net.ssl.*;
+import java.security.*;
 import java.io.*;
 import java.net.*;
 import java.util.Scanner;
 
 public class SMPClient {
-    private Socket socket;
-    private BufferedReader input;
-    private PrintWriter output;
+    private SSLSocket socket;
+    private PrintWriter out;
+    private BufferedReader in;
     private Scanner scanner;
 
-    public SMPClient(String serverAddress, int serverPort) {
+    public SMPClient(String serverAddress, int port) {
         try {
-            socket = new Socket(serverAddress, serverPort);
-            input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
-            output = new PrintWriter(socket.getOutputStream(), true);
+            char[] truststorePassword = "your_truststore_password".toCharArray();
+            KeyStore trustStore = KeyStore.getInstance("JKS");
+            FileInputStream fis = new FileInputStream("client_truststore.jks");
+            trustStore.load(fis, truststorePassword);
+            fis.close();
+
+            TrustManagerFactory tmf = TrustManagerFactory.getInstance("SunX509");
+            tmf.init(trustStore);
+
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, tmf.getTrustManagers(), null);
+
+            SSLSocketFactory sf = sslContext.getSocketFactory();
+            socket = (SSLSocket) sf.createSocket(serverAddress, port);
+
+            socket.startHandshake();
+
+            out = new PrintWriter(socket.getOutputStream(), true);
+            in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
             scanner = new Scanner(System.in);
 
-            System.out.println("Connected to SMP Server at " + serverAddress + ":" + serverPort);
-        } catch (IOException e) {
+            System.out.println("Connected securely to SMP Server at " + serverAddress + ":" + port);
+
+            runClient();
+        } catch (Exception e) {
             System.out.println("Error connecting to server: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
-    public void start() {
-        while (true) {
-            System.out.println("\nChoose an option:");
-            System.out.println("1. Log in");
-            System.out.println("2. Upload Message");
-            System.out.println("3. Download Specific Message");
-            System.out.println("4. Download All Messages");
-            System.out.println("5. Logoff");
-            System.out.println("6. Exit");
-            System.out.print("Enter your choice: ");
-
-            int choice = scanner.nextInt();
-            scanner.nextLine(); // Consume newline
-
-            switch (choice) {
-                case 1:
-                    logon();
-                    break;
-                case 2:
-                    uploadMessage();
-                    break;
-                case 3:
-                    downloadSpecificMessage();
-                    break;
-                case 4:
-                    downloadAllMessages();
-                    break;
-                case 5:
-                    logoff();
-                    break;
-                case 6:
-                    closeConnection();
-                    return;
-                default:
-                    System.out.println("Invalid choice. Try again.");
-            }
-        }
-    }
-
-    private void logon() {
-        System.out.print("Enter username: ");
-        String username = scanner.nextLine();
-        System.out.print("Enter password: ");
-        String password = scanner.nextLine();
-
-        String logonMessage = "LOGON:" + username + ":" + password;
-        output.println(logonMessage);
-
+    private void runClient() {
         try {
-            String response = input.readLine();
-            System.out.println("Server Response: " + response);
-        } catch (IOException e) {
-            System.out.println("Error reading server response: " + e.getMessage());
-        }
-    }
+            // Display welcome message from server
+            String serverMessage = in.readLine();
+            System.out.println("Server: " + serverMessage);
 
-    private void uploadMessage() {
-        System.out.print("Enter message ID: ");
-        String messageID = scanner.nextLine();
-        System.out.print("Enter message text: ");
-        String messageText = scanner.nextLine();
+            while (true) {
+                System.out.print("Enter command (LOGON, UPLOAD, DOWNLOAD, DOWNLOAD_ALL_MESSAGES, LOGOFF): ");
+                String input = scanner.nextLine();
 
-        String uploadMessage = "UPLOAD:" + messageID + ":" + messageText;
-        output.println(uploadMessage);
+                if (input.equalsIgnoreCase("LOGOFF")) {
+                    sendMessage("LOGOFF");
+                    String response = in.readLine();
+                    System.out.println("Server Response: " + response);
+                    break;
+                } else if (input.startsWith("UPLOAD")) {
+                    System.out.print("Enter message ID: ");
+                    String messageID = scanner.nextLine();
 
-        try {
-            String response = input.readLine();
-            System.out.println("Server Response: " + response);
-        } catch (IOException e) {
-            System.out.println("Error reading server response: " + e.getMessage());
-        }
-    }
+                    System.out.print("Enter message text: ");
+                    String messageText = scanner.nextLine();
 
-    private void downloadSpecificMessage() {
-        System.out.print("Enter message ID to download: ");
-        String messageID = scanner.nextLine();
+                    sendMessage("UPLOAD:" + messageID + ":" + messageText);
+                } else if (input.startsWith("DOWNLOAD")) {
+                    System.out.print("Enter message ID: ");
+                    String messageID = scanner.nextLine();
 
-        String downloadMessage = "DOWNLOAD:" + messageID;
-        output.println(downloadMessage);
+                    sendMessage("DOWNLOAD:" + messageID);
+                } else if (input.equals("DOWNLOAD_ALL_MESSAGES")) {
+                    sendMessage("DOWNLOAD_ALL_MESSAGES");
 
-        try {
-            String response = input.readLine();
-            System.out.println("Server Response: " + response);
-        } catch (IOException e) {
-            System.out.println("Error reading server response: " + e.getMessage());
-        }
-    }
+                    String response;
+                    while (!(response = in.readLine()).equals("END")) {
+                        System.out.println("Server Response: " + response);
+                    }
+                    continue; // Skip the regular response handling
+                } else if (input.startsWith("LOGON")) {
+                    System.out.print("Enter username: ");
+                    String username = scanner.nextLine();
 
-    private void downloadAllMessages() {
-        output.println("DOWNLOAD_ALL_MESSAGES");
+                    sendMessage("LOGON:" + username);
+                } else {
+                    sendMessage(input);
+                }
 
-        try {
-            String response;
-            while (!(response = input.readLine()).equals("END")) { // Server will send "END" when all messages are sent
-                System.out.println("Server: " + response);
+                // Handle regular responses
+                String response = in.readLine();
+                System.out.println("Server Response: " + response);
             }
         } catch (IOException e) {
-            System.out.println("Error reading server response: " + e.getMessage());
+            System.out.println("Error in communication: " + e.getMessage());
+        } finally {
+            closeConnection();
         }
     }
 
-    private void logoff() {
-        output.println("LOGOFF");
-
-        try {
-            String response = input.readLine();
-            System.out.println("Server Response: " + response);
-        } catch (IOException e) {
-            System.out.println("Error reading server response: " + e.getMessage());
-        }
+    private void sendMessage(String message) {
+        out.println(message);
     }
 
     private void closeConnection() {
         try {
-            System.out.println("Closing connection...");
-            socket.close();
+            if (socket != null && !socket.isClosed()) {
+                socket.close();
+                System.out.println("Disconnected from server.");
+            }
         } catch (IOException e) {
             System.out.println("Error closing connection: " + e.getMessage());
         }
     }
 
     public static void main(String[] args) {
-        SMPClient client = new SMPClient("localhost", 12345);
-        client.start();
+        String serverAddress = "localhost";
+        int serverPort = 12345;
+
+        if (args.length >= 1) {
+            serverAddress = args[0];
+        }
+
+        if (args.length >= 2) {
+            try {
+                serverPort = Integer.parseInt(args[1]);
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid port number. Using default: 12345");
+            }
+        }
+
+        new SMPClient(serverAddress, serverPort);
     }
 }
