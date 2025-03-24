@@ -1,5 +1,3 @@
-import javax.net.ssl.*;
-import java.security.*;
 import java.io.*;
 import java.net.*;
 import java.util.*;
@@ -9,41 +7,39 @@ public class SMPServer {
     private static Map<String, String> messageStore = Collections.synchronizedMap(new HashMap<>());
 
     public static void main(String[] args) {
-        try {
-            char[] keystorePassword = "your_keystore_password".toCharArray();
-            KeyStore keyStore = KeyStore.getInstance("JKS");
-            FileInputStream fis = new FileInputStream("server_keystore.jks");
-            keyStore.load(fis, keystorePassword);
-            fis.close();
+        checkKeystore();
 
-            KeyManagerFactory kmf = KeyManagerFactory.getInstance("SunX509");
-            kmf.init(keyStore, keystorePassword);
-
-            SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(kmf.getKeyManagers(), null, null);
-
-            SSLServerSocketFactory ssf = sslContext.getServerSocketFactory();
-            SSLServerSocket serverSocket = (SSLServerSocket) ssf.createServerSocket(PORT);
-
-            System.out.println("SMP Server started with SSL on port " + PORT);
+        try (ServerSocket serverSocket = new ServerSocket(PORT)) {
+            System.out.println("SMP Server started on port " + PORT);
 
             while (true) {
-                SSLSocket clientSocket = (SSLSocket) serverSocket.accept();
+                Socket clientSocket = serverSocket.accept();
                 System.out.println("New client connected: " + clientSocket.getInetAddress());
                 new ClientHandler(clientSocket).start();
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             System.out.println("Error starting server: " + e.getMessage());
-            e.printStackTrace();
+        }
+    }
+
+    private static void checkKeystore() {
+        File keystoreFile = new File("server_keystore.jks");
+        if (!keystoreFile.exists()) {
+            System.out.println("⚠ WARNING: SSL Keystore not found! Running in unsecure mode.");
+            System.out.println("   Please generate 'server_keystore.jks' to enable secure communication.");
+            System.out.println("   Use the following command to generate a test keystore:");
+            System.out.println("   keytool -genkeypair -alias serverkey -keyalg RSA -keystore server_keystore.jks -storepass password");
+        } else {
+            System.out.println("✅ Keystore found. Secure communication is available.");
         }
     }
 
     private static class ClientHandler extends Thread {
-        private SSLSocket socket;
+        private Socket socket;
         private BufferedReader input;
         private PrintWriter output;
 
-        public ClientHandler(SSLSocket socket) {
+        public ClientHandler(Socket socket) {
             this.socket = socket;
         }
 
@@ -51,8 +47,6 @@ public class SMPServer {
             try {
                 input = new BufferedReader(new InputStreamReader(socket.getInputStream()));
                 output = new PrintWriter(socket.getOutputStream(), true);
-
-                output.println("Welcome to SMP Server. Please log in.");
 
                 String message;
                 while ((message = input.readLine()) != null) {
